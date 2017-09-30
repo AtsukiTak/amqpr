@@ -1,0 +1,17 @@
+[package]
+name = "amqpr"
+version = "0.1.0"
+authors = ["AtsukiTak <takatomgoo@gmail.com>"]
+
+[dependencies]
+futures = "0.1"
+tokio-core = "0.1"
+tokio-io = "0.1"
+
+bytes = "0.4"
+
+error-chain = "0.10"
+log4rs = "0.7"
+log = "0.3"
+
+amqpr-api = "0.1"
