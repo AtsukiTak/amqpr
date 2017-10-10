@@ -17,3 +17,4 @@ amqpr-api = "0.1"
 
 [dev-dependencies]
 clap = "2.26"
+rand = "0.3"
