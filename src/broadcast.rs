@@ -1,57 +1,90 @@
+//! Convenience method to broadcast
+
 use tokio_core::reactor::Handle;
+use tokio_core::net::TcpStream;
+
 use futures::sync::mpsc::{unbounded, UnboundedSender};
 use futures::{Future, Stream};
 
 pub use bytes::Bytes;
 
-use amqpr_api::socket::open as socket_open;
-use amqpr_api::methods::{exchange, basic};
-
 use std::net::SocketAddr;
+use std::io::Error as IoError;
+
+use amqpr_api::{start_handshake, declare_exchange, open_channel, publish};
+use amqpr_api::exchange::declare::{ExchangeType, DeclareExchangeOption};
+use amqpr_api::basic::publish::PublishOption;
+use amqpr_api::handshake::SimpleHandshaker;
+use amqpr_api::errors::*;
+
+
+/// TODO : Determine local channel id by argument.
+const LOCAL_CHANNEL_ID: u16 = 42;
+
 
 
 pub type BroadcastError = ::futures::sync::mpsc::SendError<Bytes>;
 
-pub fn broadcast_sink(exchange_name: String,
-                      addr: SocketAddr,
-                      user: String,
-                      pass: String,
-                      handle: Handle)
-                      -> UnboundedSender<Bytes> {
+pub fn broadcast_sink<T, U, V>(
+    exchange_name: T,
+    addr: SocketAddr,
+    user: U,
+    pass: V,
+    handle: Handle,
+) -> UnboundedSender<Bytes>
+where
+    T: Into<String> + 'static,
+    U: Into<String> + 'static,
+    V: Into<String> + 'static,
+{
+
     let (sender, receiver) = unbounded::<Bytes>();
 
-    let handle2 = handle.clone();
+    let handshaker = SimpleHandshaker {
+        user: user.into(),
+        pass: pass.into(),
+        virtual_host: "/".into(),
+    };
 
-    handle2.spawn_fn(move || {
-        socket_open(&addr, &handle, user, pass)
-            .and_then(|global_con| global_con.declare_local_channel(42))
-            .and_then(|(g, local_con)| local_con.init().map(move |l| (g, l)))
-            .map_err(|canceld| {
-                error!("Canceled!!! : {:?}", canceld);
-            })
-            .and_then(move |(_, local_con)| {
-                // Declare Exchange
-                let declare_args = exchange::DeclareArguments {
-                    exchange_name: exchange_name.clone(),
-                    exchange_type: "fanout".into(),
-                    auto_delete: false,
-                    ..Default::default()
-                };
-                local_con.declare_exchange(declare_args);
+    let exchange_name1 = exchange_name.into();
+    let exchange_name2 = exchange_name1.clone();
 
-                // Publish items.
-                let pub_args = basic::PublishArguments {
-                    exchange_name: exchange_name,
-                    routing_key: "".into(),
-                    mandatory: false,
-                    ..Default::default()
-                };
-                receiver.for_each(move |bytes| {
-                    local_con.publish(pub_args.clone(), bytes);
-                    Ok(())
+    let future = TcpStream::connect(&addr, &handle)
+        .map_err(|e| Error::from(e))
+        .and_then(|socket| start_handshake(handshaker, socket))
+        .and_then(|socket| open_channel(socket, LOCAL_CHANNEL_ID))
+        .and_then(|socket| {
+            let option = DeclareExchangeOption {
+                name: exchange_name1,
+                typ: ExchangeType::Fanout,
+                is_passive: false,
+                is_durable: false,
+                is_auto_delete: false,
+                is_internal: false,
+                is_no_wait: false,
+            };
+            declare_exchange(socket, LOCAL_CHANNEL_ID, option)
+        })
+        .and_then(move |socket| {
+            info!("Start broadcasting");
+            receiver
+                .then(|r| Ok::<_, IoError>(r.unwrap()))
+                .fold(socket, move |socket, bytes| {
+                    info!("broadcast {:?}", bytes);
+                    let option = PublishOption {
+                        exchange: exchange_name2.clone(),
+                        routing_key: "".into(),
+                        is_mandatory: false,
+                        is_immediate: false,
+                    };
+                    publish::<IoError>(socket, LOCAL_CHANNEL_ID, bytes, option)
                 })
-            })
-    });
+                .map_err(|e| Error::from(e))
+        })
+        .map(|_socket| ())
+        .map_err(|e| panic!("Error while broadcasting! : {:?}", e));
+
+    handle.spawn(future);
 
     sender
 }

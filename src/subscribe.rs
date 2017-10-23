@@ -1,68 +1,96 @@
 use tokio_core::reactor::Handle;
+use tokio_core::net::TcpStream;
 use futures::{Future, Stream};
+use futures::stream::unfold;
 
 use bytes::Bytes;
 
-use amqpr_api::socket::open as socket_open;
-use amqpr_api::methods::{exchange, basic, queue};
-
 use std::net::SocketAddr;
 
-const SUBSCRIBER_CHANNEL: u16 = 21_u16;
+use amqpr_api::{start_handshake, declare_exchange, open_channel, bind_queue, declare_queue,
+                start_consume, receive_delivered};
+use amqpr_api::exchange::declare::{ExchangeType, DeclareExchangeOption};
+use amqpr_api::queue::{DeclareQueueOption, BindQueueOption};
+use amqpr_api::basic::StartConsumeOption;
+use amqpr_api::handshake::SimpleHandshaker;
+use amqpr_api::errors::*;
 
-pub fn subscribe_stream(exchange_name: String,
-                        addr: SocketAddr,
-                        user: String,
-                        pass: String,
-                        handle: Handle)
-                        -> Box<Stream<Item = Bytes, Error = ()>> {
 
-    let stream = socket_open(&addr, &handle, user, pass)
-        .and_then(|global_con| global_con.declare_local_channel(SUBSCRIBER_CHANNEL))
-        .and_then(|(g, l_con)| l_con.init().map(move |l| (g, l)))
-        .map_err(|canceld| {
-            error!("Canceled!!! : {:?}", canceld);
+const LOCAL_CHANNEL_ID: u16 = 42;
+
+pub fn subscribe_stream<T, U, V>(
+    exchange_name: T,
+    addr: SocketAddr,
+    user: U,
+    pass: V,
+    handle: Handle,
+) -> Box<Stream<Item = Bytes, Error = Error>>
+where
+    T: Into<String> + 'static,
+    U: Into<String> + 'static,
+    V: Into<String> + 'static,
+{
+
+    let handshaker = SimpleHandshaker {
+        user: user.into(),
+        pass: pass.into(),
+        virtual_host: "/".into(),
+    };
+
+    let exchange_name1 = exchange_name.into().clone();
+    let exchange_name2 = exchange_name1.clone();
+
+    let stream = TcpStream::connect(&addr, &handle)
+        .map_err(|e| Error::from(e))
+        .and_then(|socket| start_handshake(handshaker, socket))
+        .and_then(|socket| open_channel(socket, LOCAL_CHANNEL_ID))
+        .and_then(|socket| {
+            let option = DeclareExchangeOption {
+                name: exchange_name1,
+                typ: ExchangeType::Fanout,
+                is_passive: false,
+                is_durable: false,
+                is_auto_delete: false,
+                is_internal: false,
+                is_no_wait: false,
+            };
+            declare_exchange(socket, LOCAL_CHANNEL_ID, option)
         })
-        .and_then(move |(_, local_con)| {
-            // Declare Exchange
-            let declare_args = exchange::DeclareArguments {
-                exchange_name: exchange_name.clone(),
-                exchange_type: "fanout".into(),
-                auto_delete: false,
-                ..Default::default()
+        .and_then(|socket| {
+            let option = DeclareQueueOption {
+                name: "".into(),
+                is_passive: false,
+                is_durable: false,
+                is_exclusive: false,
+                is_auto_delete: true,
+                is_no_wait: false,
             };
-            local_con.declare_exchange(declare_args);
-
-            // Declare Queue
-            let declare_queue_args = queue::DeclareArguments {
-                queue_name: "",
-                durable: true,
-                exclusive: true,
-                auto_delete: true,
-                ..Default::default()
+            declare_queue(socket, LOCAL_CHANNEL_ID, option).map(
+                |(queue_res, socket)| (queue_res.queue, socket),
+            )
+        })
+        .and_then(|(queue, socket)| {
+            let option = BindQueueOption {
+                queue: queue.clone(),
+                exchange: exchange_name2,
+                routing_key: "".into(),
+                is_no_wait: false,
             };
-            local_con.declare_queue(declare_queue_args)
-                .map_err(|canceld| {
-                    error!("Canceled!!! : {:?}", canceld);
-                })
-                .map(move |queue_name| {
-                    // Bind Queue
-                    let bind_args = queue::BindArguments {
-                        queue_name: queue_name.clone(),
-                        exchange_name: exchange_name,
-                        ..Default::default()
-                    };
-                    local_con.bind_queue(bind_args);
-
-                    // Consume items from queue.
-                    let consume_args = basic::ConsumeArguments {
-                        queue_name: queue_name,
-                        no_ack: true,
-                        exclusive: true,
-                        ..Default::default()
-                    };
-                    local_con.consume(consume_args)
-                })
+            bind_queue(socket, LOCAL_CHANNEL_ID, option).map(move |socket| (queue, socket))
+        })
+        .and_then(|(queue, socket)| {
+            let option = StartConsumeOption {
+                queue: queue,
+                consumer_tag: "".into(),
+                is_no_local: false,
+                is_no_ack: true,
+                is_exclusive: false,
+                is_no_wait: false,
+            };
+            start_consume(socket, LOCAL_CHANNEL_ID, option)
+        })
+        .map(|socket| {
+            unfold(socket, |socket| Some(receive_delivered(socket)))
         })
         .flatten_stream();
 

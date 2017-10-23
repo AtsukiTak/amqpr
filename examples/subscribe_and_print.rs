@@ -19,8 +19,8 @@ fn main() {
     let subscribe_stream = subscribe_stream(
         args.exchange,
         args.amqp_addr.parse().unwrap(),
-        args.user.into(),
-        args.pass.into(),
+        args.user,
+        args.pass,
         core.handle(),
     );
 

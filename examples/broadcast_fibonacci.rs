@@ -3,6 +3,9 @@ extern crate futures;
 extern crate tokio_core;
 extern crate bytes;
 extern crate clap;
+#[macro_use]
+extern crate log;
+extern crate log4rs;
 
 use futures::{Sink, Stream};
 use tokio_core::reactor::{Core, Interval};
@@ -17,6 +20,8 @@ use std::time::Duration;
 
 
 fn main() {
+    logger();
+
     let (amqp_addr, user, pass) = get_args();
 
     let mut core = Core::new().unwrap();
@@ -34,18 +39,18 @@ fn main() {
         fibonacci_stream
             .zip(interval_stream)
             .map(move |(n,())| {
-            bytes_mut.clear();
-            bytes_mut.reserve(8);
-            bytes_mut.put_u64::<BigEndian>(n);
-            bytes_mut.clone().freeze()
-        })
+                bytes_mut.clear();
+                bytes_mut.reserve(8);
+                bytes_mut.put_u64::<BigEndian>(n);
+                bytes_mut.clone().freeze()
+            })
     };
 
     let broadcast_sink = broadcast_sink(
-        "fibonacci".into(),
+        "fibonacci",
         amqp_addr.parse().unwrap(),
-        user.into(),
-        pass.into(),
+        user,
+        pass,
         core.handle(),
     ).sink_map_err(|_| ());
 
@@ -83,4 +88,21 @@ fn get_args() -> (String, String, String) {
         matches.value_of("user").unwrap().into(),
         matches.value_of("pass").unwrap().into(),
     )
+}
+
+
+fn logger() {
+    use log::LogLevelFilter;
+    use log4rs::append::console::ConsoleAppender;
+    use log4rs::config::{Appender, Config, Root};
+    let stdout = ConsoleAppender::builder().build();
+
+    let config = Config::builder()
+        .appender(Appender::builder().build("stdout", Box::new(stdout)))
+        .build(Root::builder().appender("stdout").build(
+            LogLevelFilter::Info,
+        ))
+        .unwrap();
+
+    log4rs::init_config(config).unwrap();
 }

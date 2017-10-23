@@ -13,8 +13,9 @@ tokio-core = "0.1"
 futures = "0.1"
 bytes = "0.4"
 log = "0.3"
-amqpr-api = "0.1"
+amqpr-api = "0.2"
 
 [dev-dependencies]
 clap = "2.26"
 rand = "0.3"
+log4rs = "0.7"

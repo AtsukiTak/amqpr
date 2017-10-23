@@ -45,10 +45,10 @@ fn main() {
         });
 
     let broadcast_sink = broadcast_sink(
-        "random_num".into(),
+        "random_num",
         amqp_addr.parse().unwrap(),
-        user.into(),
-        pass.into(),
+        user,
+        pass,
         core.handle(),
     ).sink_map_err(|_| ());
 
