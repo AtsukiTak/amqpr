@@ -11,9 +11,12 @@ categories = ["network-programming", "encoding"]
 [dependencies]
 tokio-core = "0.1"
 futures = "0.1"
+ex-futures = "0.4"
 bytes = "0.4"
 log = "0.3"
-amqpr-api = "0.2"
+amqpr-codec = "0.2"
+# amqpr-api = "0.3"
+amqpr-api = { path = "../amqpr-api" }
 
 [dev-dependencies]
 clap = "2.26"
