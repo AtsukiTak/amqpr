@@ -1,98 +1,71 @@
-use tokio_core::reactor::Handle;
-use tokio_core::net::TcpStream;
-use futures::{Future, Stream};
-use futures::stream::unfold;
+use tokio_core::reactor::Core;
+use futures::{Future, Stream, Sink};
+use futures::sync::mpsc::{channel, Receiver};
 
 use bytes::Bytes;
 
 use std::net::SocketAddr;
+use std::time::Duration;
 
-use amqpr_api::{start_handshake, declare_exchange, open_channel, bind_queue, declare_queue,
-                start_consume, receive_delivered};
-use amqpr_api::exchange::declare::{ExchangeType, DeclareExchangeOption};
-use amqpr_api::queue::{DeclareQueueOption, BindQueueOption};
-use amqpr_api::basic::StartConsumeOption;
 use amqpr_api::handshake::SimpleHandshaker;
 use amqpr_api::errors::*;
 
+use unsync::connect;
+
 
 const LOCAL_CHANNEL_ID: u16 = 42;
+const HEARTBEAT_SEC: u64 = 60;
+const BUFFER: usize = 16;
 
-pub fn subscribe_stream<T, U, V>(
-    exchange_name: T,
+pub fn subscribe_stream(
+    exchange_name: String,
     addr: SocketAddr,
-    user: U,
-    pass: V,
-    handle: Handle,
-) -> Box<Stream<Item = Bytes, Error = Error>>
-where
-    T: Into<String> + 'static,
-    U: Into<String> + 'static,
-    V: Into<String> + 'static,
-{
+    user: String,
+    pass: String,
+) -> Receiver<Bytes> {
 
-    let handshaker = SimpleHandshaker {
-        user: user.into(),
-        pass: pass.into(),
-        virtual_host: "/".into(),
-    };
+    let (tx, rx) = channel(BUFFER);
 
-    let exchange_name1 = exchange_name.into().clone();
-    let exchange_name2 = exchange_name1.clone();
+    ::std::thread::spawn(move || {
 
-    let stream = TcpStream::connect(&addr, &handle)
-        .map_err(|e| Error::from(e))
-        .and_then(|socket| start_handshake(handshaker, socket))
-        .and_then(|socket| open_channel(socket, LOCAL_CHANNEL_ID))
-        .and_then(|socket| {
-            let option = DeclareExchangeOption {
-                name: exchange_name1,
-                typ: ExchangeType::Fanout,
-                is_passive: false,
-                is_durable: false,
-                is_auto_delete: false,
-                is_internal: false,
-                is_no_wait: false,
-            };
-            declare_exchange(socket, LOCAL_CHANNEL_ID, option)
-        })
-        .and_then(|socket| {
-            let option = DeclareQueueOption {
-                name: "".into(),
-                is_passive: false,
-                is_durable: false,
-                is_exclusive: false,
-                is_auto_delete: true,
-                is_no_wait: false,
-            };
-            declare_queue(socket, LOCAL_CHANNEL_ID, option).map(
-                |(queue_res, socket)| (queue_res.queue, socket),
-            )
-        })
-        .and_then(|(queue, socket)| {
-            let option = BindQueueOption {
-                queue: queue.clone(),
-                exchange: exchange_name2,
-                routing_key: "".into(),
-                is_no_wait: false,
-            };
-            bind_queue(socket, LOCAL_CHANNEL_ID, option).map(move |socket| (queue, socket))
-        })
-        .and_then(|(queue, socket)| {
-            let option = StartConsumeOption {
-                queue: queue,
-                consumer_tag: "".into(),
-                is_no_local: false,
-                is_no_ack: true,
-                is_exclusive: false,
-                is_no_wait: false,
-            };
-            start_consume(socket, LOCAL_CHANNEL_ID, option)
-        })
-        .map(|socket| {
-            unfold(socket, |socket| Some(receive_delivered(socket)))
-        })
-        .flatten_stream();
+        let handshaker = SimpleHandshaker {
+            user: user.into(),
+            pass: pass.into(),
+            virtual_host: "/".into(),
+        };
 
-    Box::new(stream)
+        let mut core = Core::new().unwrap();
+        let handle = core.handle();
+
+        let fut = connect(&addr, handshaker, &core.handle())
+            .and_then(move |global| {
+                // Ignore error of heartbeat.
+                let _err_notify = global.heartbeat(Duration::new(HEARTBEAT_SEC, 0), &handle);
+                global.open_channel(LOCAL_CHANNEL_ID)
+            })
+            .and_then(|(_global, local)| {
+                local.declare_private_queue("")
+            })
+            .and_then(|(queue, local)| {
+                let queue_ = queue.clone();
+                local.bind_queue(queue, exchange_name, "").map(|local| {
+                    (queue_, local)
+                })
+            });
+
+        let (queue, local) = core.run(fut).unwrap();
+
+        println!("Ready to subscribe");
+
+        let stream = local.subscribe_stream(queue, "").map_err(
+            |e| error!("{:?}", e),
+        );
+        let fut = tx.sink_map_err(|_e| {
+            info!("Subscribe stream is droped before complete to send")
+        }).send_all(stream);
+
+        core.run(fut).unwrap();
+    });
+
+    rx
 }

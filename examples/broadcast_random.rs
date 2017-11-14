@@ -12,7 +12,7 @@ use bytes::{BytesMut, BigEndian, BufMut};
 
 use clap::{App, Arg};
 
-use amqpr::broadcast_sink;
+use amqpr::broadcast::broadcast_sink;
 
 use std::time::Duration;
 
@@ -45,11 +45,10 @@ fn main() {
         });
 
     let broadcast_sink = broadcast_sink(
-        "random_num",
+        "random_num".into(),
         amqp_addr.parse().unwrap(),
         user,
         pass,
-        core.handle(),
     ).sink_map_err(|_| ());
 
     core.run(broadcast_sink.send_all(bytes_stream)).unwrap();

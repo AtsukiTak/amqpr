@@ -9,7 +9,7 @@ use tokio_core::reactor::Core;
 
 use clap::{App, Arg};
 
-use amqpr::subscribe_stream;
+use amqpr::subscribe::subscribe_stream;
 
 fn main() {
     let args = get_args();
@@ -21,7 +21,6 @@ fn main() {
         args.amqp_addr.parse().unwrap(),
         args.user,
         args.pass,
-        core.handle(),
     );
 
     let futures = subscribe_stream.for_each(|bytes| {

@@ -10,10 +10,10 @@ extern crate amqpr_codec;
 extern crate amqpr_api;
 
 
-// pub mod broadcast;
+pub mod broadcast;
 // pub use broadcast::broadcast_sink;
 
-// pub mod subscribe;
+pub mod subscribe;
 // pub use subscribe::subscribe_stream;
 
 pub mod unsync;
