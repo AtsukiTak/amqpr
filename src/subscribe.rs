@@ -8,7 +8,6 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use amqpr_api::handshake::SimpleHandshaker;
-use amqpr_api::errors::*;
 
 use unsync::connect;
 

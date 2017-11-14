@@ -15,8 +15,7 @@ ex-futures = "0.4"
 bytes = "0.4"
 log = "0.3"
 amqpr-codec = "0.2"
-# amqpr-api = "0.3"
-amqpr-api = { path = "../amqpr-api" }
+amqpr-api = "0.3"
 
 [dev-dependencies]
 clap = "2.26"

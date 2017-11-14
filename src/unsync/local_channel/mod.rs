@@ -5,9 +5,7 @@ pub use self::publish::{PublishFuture, PublishSink, PublishOption};
 pub use self::subscribe::{SubscribeStream, SubscribeOption};
 pub use amqpr_api::exchange::declare::ExchangeType;
 
-use futures::{Stream, Future};
-
-use ex_futures::StreamExt;
+use futures::Future;
 
 use bytes::Bytes;
 
