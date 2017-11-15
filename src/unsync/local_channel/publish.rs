@@ -1,5 +1,4 @@
 use futures::{Sink, Future, Poll, StartSend, Async, AsyncSink};
-use futures::task::{self, Task};
 
 use ex_futures::util::Should;
 
@@ -71,7 +70,7 @@ pub struct PublishSink {
 
 
 enum PublishState {
-    Processing(Published<Outcome>, Vec<Task>),
+    Processing(Published<Outcome>),
     Waiting(Should<Outcome>),
 }
 
@@ -81,17 +80,18 @@ impl Sink for PublishSink {
     type SinkError = Rc<Error>;
 
     fn start_send(&mut self, bytes: Bytes) -> StartSend<Bytes, Self::SinkError> {
-        use self::PublishState::*;
 
+        if let Async::NotReady = self.poll_complete()? {
+            return Ok(AsyncSink::NotReady(bytes));
+        }
+
+        use self::PublishState::*;
         self.state = match &mut self.state {
-            &mut Processing(_, ref mut tasks) => {
-                tasks.push(task::current());
-                return Ok(AsyncSink::NotReady(bytes));
-            }
+            &mut Processing(ref mut _published) => unreachable!(),
             &mut Waiting(ref mut sink) => {
                 let sink = sink.take();
                 let published = publish_(sink, self.channel, bytes, self.option.clone());
-                Processing(published, Vec::new())
+                Processing(published)
             }
         };
 
@@ -103,11 +103,8 @@ impl Sink for PublishSink {
         use self::PublishState::*;
 
         self.state = match &mut self.state {
-            &mut Processing(ref mut processing, ref mut pendings) => {
+            &mut Processing(ref mut processing) => {
                 let sink = try_ready!(processing.poll());
-                for task in pendings.drain(..) {
-                    task.notify();
-                }
                 Waiting(Should::new(sink))
             }
             &mut Waiting(_) => return Ok(Async::Ready(())),

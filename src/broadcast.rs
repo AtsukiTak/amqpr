@@ -61,7 +61,8 @@ pub fn broadcast_sink(
             .and_then(|local| {
                 // Send all received data.
                 let sink = local.publish_sink(exchange_name2, "");
-                sink.send_all(rx.then(|never_err| Ok::<_, Rc<Error>>(never_err.unwrap())))
+                let stream = rx.then(|never_err| Ok::<_, Rc<Error>>(never_err.unwrap()));
+                sink.send_all(stream)
             });
 
         core.run(fut).unwrap();
