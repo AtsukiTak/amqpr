@@ -52,7 +52,6 @@ impl Future for PublishFuture {
 
 
 
-
 pub fn publish_sink(channel: u16, option: PublishOption, sink: Outcome) -> PublishSink {
     PublishSink {
         channel: channel,
@@ -62,6 +61,7 @@ pub fn publish_sink(channel: u16, option: PublishOption, sink: Outcome) -> Publi
 }
 
 
+/// A outbound endpoint to publish data.
 pub struct PublishSink {
     channel: u16,
     option: PublishOption,

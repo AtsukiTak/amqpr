@@ -51,14 +51,17 @@ pub fn broadcast_sink(
 
         let fut = connect(&addr, handshaker, &core.handle())
             .and_then(move |global| {
+                info!("Handshake is finished");
                 // Ignore error of heartbeat.
                 let _err_notify = global.heartbeat(Duration::new(HEARTBEAT_SEC, 0), &handle);
                 global.open_channel(LOCAL_CHANNEL_ID)
             })
             .and_then(|(_global, local)| {
+                info!("Local channel open");
                 local.declare_exchange(exchange_name, ExchangeType::Fanout)
             })
             .and_then(|local| {
+                info!("An exchange is declared");
                 // Send all received data.
                 let sink = local.publish_sink(exchange_name2, "");
                 let stream = rx.then(|never_err| Ok::<_, Rc<Error>>(never_err.unwrap()));

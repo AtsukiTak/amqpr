@@ -38,14 +38,17 @@ pub fn subscribe_stream(
 
         let fut = connect(&addr, handshaker, &core.handle())
             .and_then(move |global| {
+                info!("Handshake is finished");
                 // Ignore error of heartbeat.
                 let _err_notify = global.heartbeat(Duration::new(HEARTBEAT_SEC, 0), &handle);
                 global.open_channel(LOCAL_CHANNEL_ID)
             })
             .and_then(|(_global, local)| {
+                info!("A local channel open");
                 local.declare_private_queue("")
             })
             .and_then(|(queue, local)| {
+                info!("A private queue is declared");
                 let queue_ = queue.clone();
                 local.bind_queue(queue, exchange_name, "").map(|local| {
                     (queue_, local)
