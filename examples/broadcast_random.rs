@@ -4,6 +4,8 @@ extern crate tokio_core;
 extern crate bytes;
 extern crate clap;
 extern crate rand;
+#[macro_use]
+extern crate log;
 
 use futures::{Sink, Stream};
 use tokio_core::reactor::{Core, Interval};
@@ -18,7 +20,7 @@ use std::time::Duration;
 
 use rand::Rng;
 
-const STREAM_INTERVAL_MILLI_SEC: u64 = 100;
+const STREAM_INTERVAL_MILLI_SEC: u64 = 10;
 
 fn main() {
     let (amqp_addr, user, pass) = get_args();
@@ -29,8 +31,10 @@ fn main() {
     let random_iter = rng.gen_iter::<u64>();
     let random_number_stream = futures::stream::iter_ok(random_iter);
 
-    let interval_stream = Interval::new(Duration::from_millis(STREAM_INTERVAL_MILLI_SEC), &core.handle())
-        .unwrap()
+    let interval_stream = Interval::new(
+        Duration::from_millis(STREAM_INTERVAL_MILLI_SEC),
+        &core.handle(),
+    ).unwrap()
         .map_err(|e| println!("Error : {:?}", e));
 
     let mut bytes_mut = BytesMut::new();
@@ -44,12 +48,17 @@ fn main() {
             bytes_mut.clone().freeze()
         });
 
-    let broadcast_sink = broadcast_sink(
+    let broadcast_sink_future = broadcast_sink(
         "random_num".into(),
         amqp_addr.parse().unwrap(),
         user,
         pass,
-    ).sink_map_err(|_| ());
+        core.handle(),
+    );
+
+    let broadcast_sink = core.run(broadcast_sink_future).unwrap();
+
+    let broadcast_sink = broadcast_sink.sink_map_err(|e| error!("{:?}", e));
 
     core.run(broadcast_sink.send_all(bytes_stream)).unwrap();
 }

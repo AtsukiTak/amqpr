@@ -46,12 +46,17 @@ fn main() {
             })
     };
 
-    let broadcast_sink = broadcast_sink(
+    let broadcast_sink_future = broadcast_sink(
         "fibonacci".into(),
         amqp_addr.parse().unwrap(),
         user,
         pass,
-    ).sink_map_err(|_| ());
+        core.handle(),
+    );
+
+    let broadcast_sink = core.run(broadcast_sink_future).unwrap();
+
+    let broadcast_sink = broadcast_sink.sink_map_err(|e| error!("{:?}", e));
 
     core.run(broadcast_sink.send_all(bytes_stream)).unwrap();
 }

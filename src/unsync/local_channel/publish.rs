@@ -8,7 +8,7 @@ use bytes::Bytes;
 
 use std::rc::Rc;
 
-use super::{Income, Outcome, LocalChannel};
+use super::{Income, Outgo, LocalChannel};
 use errors::*;
 
 
@@ -16,9 +16,13 @@ pub use amqpr_api::basic::publish::PublishOption;
 
 
 
-pub fn publish(ch: LocalChannel, bytes: Bytes, option: PublishOption) -> PublishFuture {
-    let (ch_id, income, outcome) = (ch.channel_id, ch.income, ch.outcome);
-    let published = publish_(outcome, ch_id, bytes, option);
+pub fn publish<In: Income, Out: Outgo>(
+    ch: LocalChannel<In, Out>,
+    bytes: Bytes,
+    option: PublishOption,
+) -> PublishFuture<In, Out> {
+    let (ch_id, income, outgo) = (ch.channel_id, ch.income, ch.outgo);
+    let published = publish_(outgo, ch_id, bytes, option);
     PublishFuture {
         store: Should::new((ch_id, income)),
         published: published,
@@ -28,23 +32,23 @@ pub fn publish(ch: LocalChannel, bytes: Bytes, option: PublishOption) -> Publish
 
 
 /// Future which will return `LocalChannel` when complete to publish bytes.
-pub struct PublishFuture {
-    store: Should<(u16, Income)>,
-    published: Published<Outcome>,
+pub struct PublishFuture<In: Income, Out: Outgo> {
+    store: Should<(u16, In)>,
+    published: Published<Out>,
 }
 
 
-impl Future for PublishFuture {
-    type Item = LocalChannel;
+impl<In: Income, Out: Outgo> Future for PublishFuture<In, Out> {
+    type Item = LocalChannel<In, Out>;
     type Error = Rc<Error>;
 
-    fn poll(&mut self) -> Poll<LocalChannel, Rc<Error>> {
-        let outcome = try_ready!(self.published.poll());
+    fn poll(&mut self) -> Poll<LocalChannel<In, Out>, Rc<Error>> {
+        let outgo = try_ready!(self.published.poll());
         let (ch_id, income) = self.store.take();
         Ok(Async::Ready(LocalChannel {
             channel_id: ch_id,
             income: income,
-            outcome: outcome,
+            outgo: outgo,
         }))
     }
 }
@@ -52,7 +56,11 @@ impl Future for PublishFuture {
 
 
 
-pub fn publish_sink(channel: u16, option: PublishOption, sink: Outcome) -> PublishSink {
+pub fn publish_sink<Out: Outgo>(
+    channel: u16,
+    option: PublishOption,
+    sink: Out,
+) -> PublishSink<Out> {
     PublishSink {
         channel: channel,
         option: option,
@@ -62,20 +70,20 @@ pub fn publish_sink(channel: u16, option: PublishOption, sink: Outcome) -> Publi
 
 
 /// A outbound endpoint to publish data.
-pub struct PublishSink {
+pub struct PublishSink<Out: Outgo> {
     channel: u16,
     option: PublishOption,
-    state: PublishState,
+    state: PublishState<Out>,
 }
 
 
-enum PublishState {
-    Processing(Published<Outcome>),
-    Waiting(Should<Outcome>),
+enum PublishState<Out: Outgo> {
+    Processing(Published<Out>),
+    Waiting(Should<Out>),
 }
 
 
-impl Sink for PublishSink {
+impl<Out: Outgo> Sink for PublishSink<Out> {
     type SinkItem = Bytes;
     type SinkError = Rc<Error>;
 

@@ -21,6 +21,7 @@ fn main() {
         args.amqp_addr.parse().unwrap(),
         args.user,
         args.pass,
+        core.handle(),
     );
 
     let futures = subscribe_stream.for_each(|bytes| {

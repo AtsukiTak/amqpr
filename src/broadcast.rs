@@ -1,9 +1,8 @@
 //! Convenience method to broadcast
 
-use tokio_core::reactor::Core;
+use tokio_core::reactor::Handle;
 
-use futures::sync::mpsc::{channel, Sender};
-use futures::{Future, Stream, Sink};
+use futures::{Future, Sink};
 
 pub use bytes::Bytes;
 
@@ -20,10 +19,11 @@ use unsync::connect;
 
 const LOCAL_CHANNEL_ID: u16 = 42;
 const HEARTBEAT_SEC: u64 = 60;
-const BUFFER: usize = 16;
 
 
-pub type BroadcastError = ::futures::sync::mpsc::SendError<Bytes>;
+pub type BroadcastSink = Box<Sink<SinkItem = Bytes, SinkError = Rc<Error>> + 'static>;
+pub type BroadcastSinkFuture = Box<Future<Item = BroadcastSink, Error = Rc<Error>> + 'static>;
+
 
 /// Convenient method for broadcasting something.
 /// This function spawns new thread dedicating broadcasting to AMQP server.
@@ -33,46 +33,35 @@ pub fn broadcast_sink(
     addr: SocketAddr,
     user: String,
     pass: String,
-) -> Sender<Bytes> {
-    let (tx, rx) = channel(BUFFER);
+    handle: Handle,
+) -> BroadcastSinkFuture {
+    let handshaker = SimpleHandshaker {
+        user: user,
+        pass: pass,
+        virtual_host: "/".into(),
+    };
 
-    ::std::thread::spawn(move || {
-        let handshaker = SimpleHandshaker {
-            user: user,
-            pass: pass,
-            virtual_host: "/".into(),
-        };
+    let exchange_name2 = exchange_name.clone();
 
-        let exchange_name2 = exchange_name.clone();
+    let sink_fut = connect(&addr, handshaker, &handle.clone())
+        .map(move |global| {
+            info!("Handshake is finished");
+            global.heartbeat(Duration::new(HEARTBEAT_SEC, 0), &handle)
+        })
+        .and_then(|(global, _heartbeat_error_notify)| {
+            drop(_heartbeat_error_notify); // Ignore error of heartbeat.
+            global.open_channel(LOCAL_CHANNEL_ID)
+        })
+        .and_then(|(_global, local)| {
+            drop(_global);
+            info!("Local channel open");
+            local.declare_exchange(exchange_name, ExchangeType::Fanout)
+        })
+        .map(|local| {
+            info!("An exchange is declared");
+            local.publish_sink(exchange_name2, "")
+        })
+        .map(|(_local, sink)| Box::new(sink) as BroadcastSink);
 
-        let mut core = Core::new().unwrap();
-
-        let handle = core.handle();
-
-        let fut = connect(&addr, handshaker, &core.handle())
-            .and_then(move |global| {
-                info!("Handshake is finished");
-                // Ignore error of heartbeat.
-                let _err_notify = global.heartbeat(Duration::new(HEARTBEAT_SEC, 0), &handle);
-                global.open_channel(LOCAL_CHANNEL_ID)
-            })
-            .and_then(|(_global, local)| {
-                info!("Local channel open");
-                local.declare_exchange(exchange_name, ExchangeType::Fanout)
-            })
-            .and_then(|local| {
-                info!("An exchange is declared");
-                // Send all received data.
-                let sink = local.publish_sink(exchange_name2, "");
-                let stream = rx.then(|never_err| Ok::<_, Rc<Error>>(never_err.unwrap()));
-                sink.send_all(stream)
-            });
-
-        core.run(fut).unwrap();
-
-        info!("Complete to send all datas");
-    });
-
-
-    tx
+    Box::new(sink_fut) as BroadcastSinkFuture
 }
